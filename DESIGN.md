@@ -202,6 +202,9 @@ export async function vector(text) {
   const out = await embed(text, { pooling: "mean", normalize: true });
   return Array.from(out.data);
 }
+// NOTE (post-refactor): `cosine` now lives in `src/core/math.js` (pure math, no model
+// import) so the scoring logic and its unit tests don't pull in @huggingface/transformers.
+// `embeddings.js` keeps only the model-backed async `vector()`.
 export function cosine(a, b) {        // vectors are normalised -> dot product
   return a.reduce((s, x, i) => s + x * b[i], 0);
 }
@@ -278,22 +281,35 @@ agent logic from section 6.
 
 ## 10. File structure
 
+Post-refactor (SOLID / separation of concerns): each agent is a thin orchestrator that
+owns its I/O and delegates pure logic to `core/`; all tunable knobs live in `config.js`.
+
 ```
 .
 ├── src/
-│   ├── index.js            # entry: read arg, invoke graph, write file
+│   ├── index.js            # entry: read arg, invoke graph, delegate save + print
+│   ├── config.js           # all tunables: models, token caps, fetch cap + parser opts, thresholds
 │   ├── graph.js            # StateGraph wiring
 │   ├── feeds.js            # fixed feed list
 │   ├── state.js            # typedefs + Zod schema
-│   ├── lib/
-│   │   ├── embeddings.js
-│   │   └── llm.js
-│   └── agents/
+│   ├── cli/
+│   │   └── output.js       # saveNewsletter() — file I/O
+│   ├── core/               # PURE domain logic (no I/O, no model load) — unit-tested
+│   │   ├── math.js         # cosine()
+│   │   ├── fetching.js     # toArticle(), interleave(), selectArticles()
+│   │   ├── scoring.js      # filterExcluded(), labelByTopic(), filterByRelevance(), dedupe()
+│   │   └── newsletter.js   # groupByLabel(), renderMarkdown()
+│   ├── lib/                # I/O-bound helpers
+│   │   ├── embeddings.js   # async vector() (model-backed)
+│   │   ├── llm.js          # OpenAI client + ask()
+│   │   └── json.js         # extractJson()
+│   └── agents/             # thin orchestrators (state) => state
 │       ├── preference.js
 │       ├── fetcher.js
 │       ├── scoring.js
 │       ├── summariser.js
 │       └── editor.js
+├── test/                   # node:test unit suites for core/ + lib/json
 ├── output/                 # generated newsletters
 ├── .env                    # OPENAI_API_KEY=...
 ├── README.md
